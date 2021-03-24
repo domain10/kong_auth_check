@@ -1,5 +1,13 @@
 local typedefs = require "kong.db.schema.typedefs"
 
+local string_record = {
+  type = "record",
+  fields = {
+    { ucenter = {type = "string"} },
+  },
+}
+
+
 return {
   name = "my-auth-check",
   fields = {
@@ -7,8 +15,13 @@ return {
     { config = {
         type = "record",
         fields = {
-          { ucenter_url = typedefs.url({ required = false }) },
-          -- { ignore_addr = { type = "string",required = false, }, },
-    }, }, },
-  },
+            { host = typedefs.host({ required = false }), },
+            { port = typedefs.port({ required = false }), },
+            { jump_upstream = string_record },
+            { del_cache = { type = "boolean", default = false }, },
+-- { ucenter_url = typedefs.url({ required = false }) },
+-- { frontend_dir = {type = "string"} },
+        }, 
+	},},
+  }
 }
