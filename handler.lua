@@ -53,6 +53,8 @@ local function handleResponse(res, jump_upstream)
         local status = 500
         if "Error: Token is not valid" == tmp["error"]["message"] then
             status = 401
+        elseif tmp["error"]["code"] ~= nil then
+            status = tmp["error"]["code"]
         end
         return responseFrontend(status, { message = tmp["error"]["message"] })
     elseif tmp["result"] ~= nil then
