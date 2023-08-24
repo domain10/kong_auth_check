@@ -193,7 +193,7 @@ function _M.rpc_access(self, host, port, args)
     local res, err = _read_reply(sock)
     --
     if not err then
-        ok, err = sock:setkeepalive(60000, 6)
+        ok, err = sock:setkeepalive(180000, 8)
         if not ok then
             sock:close()
         end

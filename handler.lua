@@ -5,6 +5,7 @@ local kong = kong
 local url = require "socket.url"
 local http = require "resty.http"
 local cjson = require 'cjson'
+local cache = ngx.shared.kong_db_cache -- lua_shared_dict kong_db_cache    128m;
 
 local rpc = require "kong.plugins.my-auth-check.rpc"
 
@@ -53,7 +54,7 @@ local function handleResponse(res, jump_upstream)
         local status = 500
         if "Error: Token is not valid" == tmp["error"]["message"] then
             status = 401
-        elseif tmp["error"]["code"] ~= nil then
+        elseif tmp["error"]["code"] ~= nil and tmp["error"]["code"] >= 100 and tmp["error"]["code"] <= 600 then
             status = tmp["error"]["code"]
         end
         return responseFrontend(status, { message = tmp["error"]["message"] })
@@ -69,7 +70,7 @@ end
 
 -- 去用户中心验证
 local function requestUcenter(url)
-    local data = "route=" .. ngx.var.request_method .."|".. ngx.var.uri
+    local data = "route=" .. string.lower(ngx.var.request_method) .."|".. ngx.var.uri
     local requestUrl = parse_url(url)
     local httpc = http.new()
     
@@ -121,7 +122,7 @@ end
 local function rpcUcenter(conf)
     local originHeader = ngx.req.get_headers()
     local data = {
-        ["route"] = ngx.var.request_method .."|".. ngx.var.uri,
+        ["route"] = string.lower(ngx.var.request_method) .."|".. ngx.var.uri,
     }
     if originHeader["authorization"] ~= nil then
         data["auth"] = originHeader["authorization"]
@@ -139,6 +140,9 @@ local function rpcUcenter(conf)
     if conf.not_check ~= nil then
         data["not_check"] = conf.not_check
     end
+    if conf.strip_path ~= nil then
+        data["strip_path"] = conf.strip_path
+    end
     data = {
         ["jsonrpc"] = "2.0",
         ["method"] = "UserInterface@checkUrl",
@@ -149,16 +153,71 @@ local function rpcUcenter(conf)
     return c:rpc_access(conf.host, conf.port, data)
 end
 
+local function handleApi(conf)
+    local key = "api_belong"
+    local cval = cache:get(key)
+    if cval == nil then
+        local data = {
+            ["jsonrpc"] = "2.0",
+            ["method"] = "UserInterface@getApiInfos",
+            ["params"] = {["data"] = {}},
+        }
+        local err
+        local c = rpc:new()
+        cval, err = c:rpc_access(conf.host, conf.port, data)
+        if cval ~= nil and cval ~= '' then
+            cache:set(key, cval, 600)
+        else
+            return false
+        end
+    end
+
+    local m = string.lower(ngx.var.request_method)
+    local path = ngx.var.uri
+    local value = cjson.decode(cval)
+    if value["result"] ~= nil then
+        value = value["result"]
+    end
+    if value[m] ~= nil and value[m][path] ~= nil then
+        handleResponse('{"jump":"'.. value[m][path] ..'"}', conf.jump_upstream)
+    elseif value[m] ~= nil then
+        local pathArr = explode('/', string.sub(path, 5))
+        local plen = #pathArr
+        local ruleArr, matchNum
+        for k, belong in pairs(value[m]) do
+            ruleArr = explode('/', string.sub(k, 5))
+            matchNum = 0
+            if #ruleArr == plen then
+                for i,item in pairs(ruleArr) do
+                    if pathArr[i] == item or string.sub(item, 1, 1) == ':' then
+                       matchNum = matchNum+1
+                    else
+                       break
+                    end
+                end
+            end
+            if matchNum == plen then
+                handleResponse('{"jump":"'.. belong ..'"}', conf.jump_upstream)
+                return true
+            end
+        end
+    end
+end
+
 -- 检查配置和请求
 local function checkConfigReq(conf)
     local res = true
     local originHeader = ngx.req.get_headers()
+    local path = string.sub(ngx.var.uri .. '/',1,5)
 	
     if conf.ucenter_url == nil and (conf.host == nil or conf.port == nil) then
         res = false
-    elseif string.sub(ngx.var.uri,1,4) == "/doc" or string.find(ngx.var.uri,'.',1,true) ~= nil or ngx.var.uri == "/system/gen_routes" then
+    elseif  path == '/api/' then
+        res = false	
+        handleApi(conf)
+    elseif path == '/get/' or path == '/doc/' or ngx.var.uri == '/post' or string.find(ngx.var.uri,'.',1,true) ~= nil or ngx.var.uri == '/system/gen_routes' then
         res = false
-	elseif originHeader["toketypes"] ~= nil and string.lower(originHeader["toketypes"]) == "virtual" then
+    elseif originHeader["toketypes"] ~= nil and string.lower(originHeader["toketypes"]) == "virtual" then
         res = false
     end
     return res
@@ -225,7 +284,7 @@ function MyAuthCheck:access(conf)
     end
 	
     if checkConfigReq(conf) then
-        checkMenuApi(conf)
+        -- checkMenuApi(conf)
         -- local body, err = requestUcenter(conf.ucenter_url)
         local body, err = rpcUcenter(conf)
         if type(err) ~= "nil" then
