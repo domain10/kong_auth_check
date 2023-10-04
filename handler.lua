@@ -5,7 +5,7 @@ local kong = kong
 local url = require "socket.url"
 local http = require "resty.http"
 local cjson = require 'cjson'
-local cache = ngx.shared.kong_db_cache -- lua_shared_dict kong_db_cache    128m;
+local cache = ngx.shared.kong_db_cache
 
 local rpc = require "kong.plugins.my-auth-check.rpc"
 
@@ -32,6 +32,14 @@ local function parse_url(host_url)
     end
     
     return parsed_url
+end
+
+local function explode(delimiter, str)
+    local list = {}
+    for v in string.gmatch(str .. delimiter, "(.-)" .. delimiter) do
+        table.insert(list, v)
+    end
+    return list
 end
 
 local function responseFrontend(status, data)
@@ -214,7 +222,7 @@ local function checkConfigReq(conf)
         res = false
     elseif  path == '/api/' then
         res = false	
-        handleApi(conf)
+        --handleApi(conf)
     elseif path == '/get/' or path == '/doc/' or ngx.var.uri == '/post' or string.find(ngx.var.uri,'.',1,true) ~= nil or ngx.var.uri == '/system/gen_routes' then
         res = false
     elseif originHeader["toketypes"] ~= nil and string.lower(originHeader["toketypes"]) == "virtual" then
@@ -247,15 +255,6 @@ local function tableValueIn(tbl, value)
         end
     end
     return false
-end
-
--- 分割字符串转为数组
-local function explode(delimiter, str)
-    local list = {}
-    for v in string.gmatch(str .. delimiter, "(.-)" .. delimiter) do
-        table.insert(list, v)
-    end
-    return list
 end
 
 -- 检查api
